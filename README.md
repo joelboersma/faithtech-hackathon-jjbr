@@ -57,9 +57,28 @@ Client generation runs after installation and before builds/typechecking; it doe
 
 Reference: [Prisma 7 PostgreSQL setup](https://www.prisma.io/docs/v7/prisma-orm/quickstart/postgresql).
 
-## MCP server
+## Church MCP and Sinch entry point
 
-`src/mcp/server.ts` creates a server with a Zod-validated `greet` tool and a JSON resource at `faithtech://info`. Add tools and resources there. `src/mcp/stdio.ts` connects it using stdio, independently of Next.js.
+`POST /api/webhooks/sinch` is the entry point for Sinch Conversation API callbacks. It verifies Sinch's base64 HMAC signature over the exact request body, nonce, and timestamp, checks the configured app/project, and persists incoming messages. Use **CONVERSATION** processing mode and subscribe to **MESSAGE_INBOUND**. Receipts and other triggers are acknowledged without invoking the agent.
+
+The webhook invokes **GLM 5.3 Flash through OpenRouter** using model ID `z-ai/glm-5.3-flash`. Set `OPENROUTER_API_KEY` in your local `.env` and deployment secrets; `OPENROUTER_MODEL` defaults to that exact model. The key stays on the server. Missing credentials or provider failures return HTTP 503 after saving the inbound message, allowing Sinch to retry.
+
+`src/backend/openrouter.ts` calls OpenRouter's chat completions endpoint using native function/tool messages. It preserves tool-call IDs and returned reasoning context between turns, supplies MCP tool schemas on every request, and requires providers to support the requested parameters. It does not fall back to a different model. Requests have a 20-second timeout, and each agent run has a 45-second model/tool execution budget and an eight-turn limit. Truncated or malformed model responses fail rather than being sent as confirmations.
+
+`src/backend/agent.ts` defines the provider contract: the model receives instructions, recent conversation context, and discovered MCP tool schemas, and returns text or tool calls. It uses a real in-memory MCP client/server connection to execute calls. The server is bound to the verified inbound message, so the model cannot select another sender or destination.
+
+Available application tools:
+
+| Tool | Behavior |
+| --- | --- |
+| `get_church_context` | Read the sender's church and recent messages. |
+| `onboard_church` | Register a church name and location for this sender. Repeated identical calls are safe. |
+| `update_baptisms_2026` | Set the absolute 2026 total to a nonnegative integer, including zero. |
+| `reply_to_conversation` | Send one reply to the originating contact on the originating channel. |
+
+The agent asks for missing onboarding details or ambiguous baptism totals. A Sinch contact owns one church across channels and conversations; another contact cannot update it by supplying a church ID. Sharing one church among multiple representatives and ownership transfers are not implemented. Church names are not globally unique.
+
+The existing `greet` connectivity tool and `faithtech://info` resource remain available. `src/mcp/stdio.ts` connects the server using stdio, independently of Next.js.
 
 ```sh
 npm run mcp:dev
@@ -84,7 +103,7 @@ Stdio waits for an MCP client; it is not an HTTP endpoint. Configure a local MCP
 }
 ```
 
-Keep stdout reserved for MCP JSON-RPC messages; use stderr for logging. This local starter exposes no database or messaging operations. Add authorization before exposing sensitive tools, and use Streamable HTTP plus authentication if you later host a remote MCP endpoint.
+Keep stdout reserved for MCP JSON-RPC messages; use stderr for logging. Stdio is trusted local operator access. `POST /api/mcp` also exposes a stateless Streamable HTTP MCP server and requires `Authorization: Bearer <MCP_BEARER_TOKEN>`. These operator clients must provide the saved database `inboundMessageId` when calling application tools. Their credential grants access to all saved conversations; give church representatives access through Sinch, not this operator endpoint. Use HTTPS for hosted endpoints. MCP clients must accept both `application/json` and `text/event-stream`.
 
 Reference: [MCP TypeScript server guide](https://ts.sdk.modelcontextprotocol.io/server).
 
@@ -100,11 +119,17 @@ curl http://localhost:3000/api/hello \
 
 ## Sinch
 
-Set `SINCH_PROJECT_ID`, `SINCH_KEY_ID`, and `SINCH_KEY_SECRET` using credentials from the Sinch dashboard. Import `getSinch` from `@/lib/sinch` in server code to access the initialized `SinchClient`. Choose and configure the Sinch API for your use case; some APIs require additional credentials or an application ID. The scaffold does not send messages or incur messaging charges.
+Set `SINCH_PROJECT_ID`, `SINCH_KEY_ID`, `SINCH_KEY_SECRET`, `SINCH_APP_ID`, `SINCH_REGION` (`us`, `eu`, or `br`), and `SINCH_WEBHOOK_SECRET` in `.env`, along with `OPENROUTER_API_KEY`. The webhook secret must match the secret set on the Sinch webhook. Apply the migration with `npm run db:deploy`, deploy Next.js, and configure the webhook target as `https://your-host/api/webhooks/sinch`.
 
-The Prisma and Sinch modules use `server-only` to prevent accidental browser imports. For future standalone MCP tools, extract shared service factories into backend modules that do not depend on Next.js's `server-only` marker.
+Replies use the Sinch Conversation API and can incur messaging charges. The SDK send request takes a contact rather than a conversation ID; the service checks that the originating conversation is still active and belongs to the expected app/contact before sending on its original channel. Sinch allows one active conversation per contact/app. Receipt processing is not included, so a saved outbound status of `sent` means accepted by Sinch, not delivered to the handset.
 
-Reference: [Sinch Node SDK setup and supported APIs](https://developers.sinch.com/docs/sdks/node/sdk-reference-docs).
+Duplicate inbound callbacks reuse the saved message. Agent runs are serialized per sender using a five-minute database lease. Baptism changes and their saved tool results commit together; retrying an old callback cannot overwrite a newer update. Replies use a persisted outbox record and send lease, reusing the first saved reply on retries. A crash or timeout after Sinch accepts a send but before its ID is committed can still cause a duplicate reply; there is no cross-system exactly-once guarantee.
+
+The webhook currently waits for the agent and reply before returning 200; failures return 503 for Sinch retry. A process crash leaves a lease that can be reclaimed by a later callback after five minutes. There is no independent queue worker/retry scheduler. For production traffic, put the persisted inbox behind a durable worker so model latency does not hold the Sinch callback open. Non-text messages receive a request to send text.
+
+Next.js wrappers in `src/lib/prisma.ts` and `src/lib/sinch.ts` retain `server-only`; standalone MCP services use shared factories in `src/backend`. Never import backend modules into browser components.
+
+References: [Sinch callbacks and signature verification](https://developers.sinch.com/docs/conversation/callbacks), [Sinch Node SDK](https://developers.sinch.com/docs/sdks/node/sdk-reference-docs).
 
 ## Checks and production
 
@@ -116,6 +141,6 @@ npm run build
 npm start
 ```
 
-Tests cover API validation and MCP tool discovery, invocation, input rejection, and resource reads over an in-memory transport. Supabase, database, and Sinch connectivity require your own project credentials and are not exercised by these tests. Configure environment variables on your hosting platform before deployment, and apply committed database migrations with `npm run db:deploy`.
+Tests cover API validation, MCP discovery/invocation, scoped tools, baptism input validation, agent execution, OpenRouter request/response handling and native tool round trips, webhook signature/identity checks, receipt filtering, retry responses, and authenticated HTTP MCP transport. Live database, AI-provider, and Sinch connectivity are not exercised by these tests. Configure environment variables on your hosting platform before deployment, and apply committed database migrations with `npm run db:deploy`.
 
 Dependency installation creates `package-lock.json`; commit it to make subsequent installs reproducible with `npm ci`.

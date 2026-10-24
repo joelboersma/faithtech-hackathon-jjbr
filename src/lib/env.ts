@@ -16,6 +16,7 @@ export const sinchEnvSchema = z.object({
   SINCH_PROJECT_ID: z.string().min(1),
   SINCH_KEY_ID: z.string().min(1),
   SINCH_KEY_SECRET: z.string().min(1),
+  SINCH_REGION: z.enum(["us", "eu", "br"]).default("us"),
 });
 
 export function getSupabaseEnv() {
