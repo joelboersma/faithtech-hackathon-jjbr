@@ -1,13 +1,19 @@
-const stack = ["Next.js + React + TypeScript", "Supabase", "Prisma + PostgreSQL", "Model Context Protocol", "Zod", "Sinch"];
+import { getPrisma } from "@/lib/prisma";
+import { ChurchDashboard, type DashboardChurch } from "./church-dashboard";
 
-export default function Home() {
-  return (
-    <main>
-      <p className="eyebrow">FaithTech Hackathon</p>
-      <h1>Ready to build.</h1>
-      <p>Your starter is set up. Add your credentials in <code>.env</code> and bring your idea to life.</p>
-      <ul>{stack.map((item) => <li key={item}>{item}</li>)}</ul>
-      <p>Start with <code>src/app/page.tsx</code>. See <code>README.md</code> for integration setup.</p>
-    </main>
-  );
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  let churches: DashboardChurch[] = [];
+  let unavailable = false;
+  try {
+    const registered = await getPrisma().church.findMany({
+      select: { id: true, name: true, location: true, baptisms2026: true, createdAt: true, updatedAt: true },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    });
+    churches = registered.map((church) => ({ ...church, id: church.id.toString(), createdAt: church.createdAt.toISOString(), updatedAt: church.updatedAt.toISOString() }));
+  } catch {
+    unavailable = true;
+  }
+  return <ChurchDashboard churches={churches} unavailable={unavailable} />;
 }

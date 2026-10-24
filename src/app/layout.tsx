@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FaithTech starter",
-  description: "Next.js, Supabase, Prisma, MCP, Zod, and Sinch starter",
+  title: "Church dashboard | FaithTech",
+  description: "Registered churches, locations, and reported baptisms across the FaithTech church network.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

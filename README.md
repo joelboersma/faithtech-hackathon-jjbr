@@ -12,7 +12,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open http://localhost:3000. The starter page and `POST /api/hello` work without external credentials. Integration clients are initialized and validated only when called. Fill in `.env` before using those clients; restart Next.js after changing public environment variables.
+Open http://localhost:3000. The main page is a church dashboard listing every registered church, its location, 2026 baptism total, registration date, and last updated date. It includes network totals, search by name or location, and a refresh button. Data is queried from PostgreSQL on each page request or refresh; configure `DATABASE_URL` and apply migrations to load registrations. The page shows an unavailable state when the database cannot be reached and an empty state when there are no registrations. `POST /api/hello` works without external credentials. Integration clients are initialized and validated only when called. Fill in `.env` before using those clients; restart Next.js after changing public environment variables.
 
 ## Supabase
 
