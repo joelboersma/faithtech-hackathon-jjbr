@@ -7,11 +7,77 @@ datasource db {
   provider = "postgresql"
 }
 
-// Starter application model, independent of Supabase's auth.users table.
-model Note {
-  id        String   @id @default(cuid())
-  title     String
-  content   String   @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Contact {
+  id                BigInt            @id @default(autoincrement())
+  displayName       String?           @map("display_name")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  channelIdentities ChannelIdentity[]
+
+  @@map("contacts")
+}
+
+model ChannelIdentity {
+  id            BigInt         @id @default(autoincrement())
+  contactId     BigInt         @map("contact_id")
+  channel       String
+  externalId    String         @map("external_id")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  contact       Contact        @relation(fields: [contactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  conversations Conversation[]
+
+  @@unique([channel, externalId])
+  @@map("channel_identities")
+}
+
+model Conversation {
+  id                  BigInt          @id @default(autoincrement())
+  channelIdentityId   BigInt          @map("channel_identity_id")
+  sinchConversationId String?         @unique @map("sinch_conversation_id")
+  lastMessageAt       DateTime?       @map("last_message_at") @db.Timestamptz(6)
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  channelIdentity     ChannelIdentity @relation(fields: [channelIdentityId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  messages            Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id                BigInt       @id @default(autoincrement())
+  conversationId    BigInt       @map("conversation_id")
+  // Enforced by messages_direction_check in the SQL migration (Prisma cannot model CHECK constraints).
+  direction         String
+  providerMessageId String       @unique @map("provider_message_id")
+  messageType       String       @map("message_type")
+  body              String?
+  status            String       @default("received")
+  rawPayload        Json         @map("raw_payload") @db.JsonB
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([conversationId, createdAt(sort: Desc)], map: "messages_conversation_idx")
+  @@map("messages")
+}
+
+model MessageStatusEvent {
+  id                BigInt    @id @default(autoincrement())
+  // No relation: a receipt can arrive before its message is stored.
+  providerMessageId String    @map("provider_message_id")
+  status            String
+  reason            Json?     @db.JsonB
+  eventTime         DateTime? @map("event_time") @db.Timestamptz(6)
+  rawPayload        Json      @map("raw_payload") @db.JsonB
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([providerMessageId], map: "status_events_msg_idx")
+  @@map("message_status_events")
+}
+
+model WebhookEvent {
+  id         BigInt   @id @default(autoincrement())
+  rawPayload Json     @map("raw_payload") @db.JsonB
+  processed  Boolean  @default(false)
+  error      String?
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  @@map("webhook_events")
 }

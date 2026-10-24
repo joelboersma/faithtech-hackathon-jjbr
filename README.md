@@ -32,24 +32,26 @@ Prisma connects to the same Supabase PostgreSQL database using its PostgreSQL dr
 
 ```sh
 npm run db:validate
-npm run db:migrate -- --name init
+npm run db:deploy
 npm run db:generate
 npm run db:studio
 ```
 
-The migration command creates the example `Note` table. It needs a development database and may require a shadow database; for a hosted database without shadow-database privileges, generate migrations against a local development PostgreSQL instance, commit `prisma/migrations`, then apply them with `npm run db:deploy`. No migration has been applied by this scaffold.
+The committed initial migration creates `contacts`, `channel_identities`, `conversations`, `messages`, `message_status_events`, and `webhook_events` from the supplied SQL schema. `db:deploy` applies committed migrations without a shadow database. For future schema changes, use `npm run db:migrate -- --name describe_change` against a development database with shadow-database privileges, then commit the generated migration.
+
+Prisma models use camelCase fields mapped to the original snake_case columns. IDs are JavaScript `bigint` values; convert them to strings before JSON serialization. Timestamps use PostgreSQL `TIMESTAMPTZ`, and payloads use `JSONB`. The SQL migration enforces `messages.direction` as `inbound` or `outbound`; preserve this custom check constraint in future migrations because Prisma schema syntax cannot represent it. Status events intentionally have no foreign key to messages so receipts can arrive first.
 
 Use Prisma in server code:
 
 ```ts
 import { getPrisma } from "@/lib/prisma";
-import { createNoteSchema } from "@/lib/validation";
 
-const data = createNoteSchema.parse({ title: "First idea" });
-const note = await getPrisma().note.create({ data });
+const contact = await getPrisma().contact.create({
+  data: { displayName: "Alex" },
+});
 ```
 
-Prisma uses the database role in the connection string; it does not inherit a Supabase user's session or RLS permissions. Add authorization before exposing queries. The example `Note` model is separate from Supabase's managed `auth` schema.
+Prisma uses the database role in the connection string; it does not inherit a Supabase user's session or RLS permissions. Add authorization before exposing queries. These application models are separate from Supabase's managed `auth` schema.
 
 Client generation runs after installation and before builds/typechecking; it does not require a live database. Runtime connections use `DATABASE_URL`; Prisma CLI database operations prefer `DIRECT_URL`. Keep Prisma CLI, client, and adapter on matching versions when upgrading.
 
