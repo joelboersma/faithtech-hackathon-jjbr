@@ -17,7 +17,24 @@ export const replyInput = z.object({ text: z.string().trim().min(1).max(4000) })
 export type ChurchTools = Pick<ChurchService, "getContext" | "onboardChurch" | "updateBaptisms" | "reply">;
 export type SendReply = (inbound: Inbound, text: string) => Promise<string>;
 
+export function buildSinchReplyRequest(inbound: Inbound, text: string, smsSender = process.env.SINCH_SMS_SENDER) {
+  const isSms = inbound.message.channel_identity.channel === "SMS";
+  const sender = inbound.message.sender_id || smsSender?.trim();
+  if (isSms && !sender) {
+    throw new Error("SMS replies require the inbound sender_id or SINCH_SMS_SENDER");
+  }
+  return {
+    app_id: inbound.app_id,
+    recipient: { contact_id: inbound.message.contact_id },
+    channel_priority_order: [inbound.message.channel_identity.channel],
+    ...(isSms && { channel_properties: { SMS_SENDER: sender! } }),
+    message: { text_message: { text } },
+    message_metadata: inbound.message.id,
+  };
+}
+
 export const sendSinchReply: SendReply = async (inbound, text) => {
+  const sendMessageRequestBody = buildSinchReplyRequest(inbound, text);
   const api = getSinch().conversation;
   // SendMessage has no conversation_id parameter. Resolve and verify the active
   // conversation before sending to its contact on the original channel.
@@ -26,13 +43,7 @@ export const sendSinchReply: SendReply = async (inbound, text) => {
     || conversation.contact_id !== inbound.message.contact_id) {
     throw new Error("The originating Sinch conversation is no longer active");
   }
-  const result = await api.messages.send({ sendMessageRequestBody: {
-    app_id: inbound.app_id,
-    recipient: { contact_id: inbound.message.contact_id },
-    channel_priority_order: [inbound.message.channel_identity.channel],
-    message: { text_message: { text } },
-    message_metadata: inbound.message.id,
-  } });
+  const result = await api.messages.send({ sendMessageRequestBody });
   if (!result.message_id) throw new Error("Sinch did not return a message ID");
   return result.message_id;
 };

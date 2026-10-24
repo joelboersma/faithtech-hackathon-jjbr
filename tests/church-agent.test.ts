@@ -6,7 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createMcpServer } from "../src/mcp/server";
 import { runChurchAgent, type AgentDecision, type AgentModel } from "../src/backend/agent";
-import type { ChurchTools } from "../src/backend/church-service";
+import { buildSinchReplyRequest, type ChurchTools } from "../src/backend/church-service";
+import { inboundSchema } from "../src/backend/sinch-webhook";
 import { createSinchWebhookHandler } from "../src/backend/webhook-handler";
 import { POST as mcpPost } from "../src/app/api/mcp/route";
 
@@ -17,6 +18,29 @@ const payload = {
     contact_message: { text_message: { text: "Our church has 12 baptisms in 2026" } } },
 };
 const env = { SINCH_WEBHOOK_SECRET: "test-secret", SINCH_PROJECT_ID: "project", SINCH_APP_ID: "app" };
+
+test("SMS replies use the receiving Sinch number as SMS_SENDER and keep the contact as recipient", () => {
+  const inbound = inboundSchema.parse({ ...payload, message: { ...payload.message,
+    sender_id: "12025550100", channel_identity: { channel: "SMS", identity: "12025550101" },
+  } });
+  const request = buildSinchReplyRequest(inbound, "Reply", "12025550102");
+  assert.deepEqual(request.channel_properties, { SMS_SENDER: "12025550100" });
+  assert.deepEqual(request.recipient, { contact_id: "sender" });
+  assert.deepEqual(request.channel_priority_order, ["SMS"]);
+  assert.equal(request.message_metadata, "sinch-message");
+  delete inbound.message.sender_id;
+  assert.deepEqual(buildSinchReplyRequest(inbound, "Reply", " 12025550102 ").channel_properties,
+    { SMS_SENDER: "12025550102" });
+  assert.throws(() => buildSinchReplyRequest(inbound, "Reply", ""), /require.*sender_id.*SINCH_SMS_SENDER/);
+  inbound.message.sender_id = "";
+  assert.throws(() => buildSinchReplyRequest(inbound, "Reply", ""), /require.*sender_id/);
+});
+
+test("non-SMS replies accept empty sender_id and omit SMS properties", () => {
+  const inbound = inboundSchema.parse({ ...payload, message: { ...payload.message, sender_id: "" } });
+  assert.equal(buildSinchReplyRequest(inbound, "Reply", "12025550102").channel_properties, undefined);
+});
+
 function signedRequest(body: string, secret = env.SINCH_WEBHOOK_SECRET) {
   const timestamp = "1792857600";
   const nonce = "nonce";

@@ -11,6 +11,8 @@ export const inboundSchema = z.object({
     direction: z.literal("TO_APP"),
     contact_id: id,
     conversation_id: id,
+    // For SMS this is our receiving number, not the contact's phone number.
+    sender_id: z.string().trim().max(200).optional(),
     channel_identity: z.object({ channel: id, identity: id }),
     contact_message: z.object({ text_message: z.object({ text: z.string().min(1).max(10000) }).optional() }),
   }),

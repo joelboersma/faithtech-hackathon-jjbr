@@ -131,6 +131,8 @@ Next.js wrappers in `src/lib/prisma.ts` and `src/lib/sinch.ts` retain `server-on
 
 References: [Sinch callbacks and signature verification](https://developers.sinch.com/docs/conversation/callbacks), [Sinch Node SDK](https://developers.sinch.com/docs/sdks/node/sdk-reference-docs).
 
+SMS replies explicitly include `channel_properties.SMS_SENDER`, using the receiving Sinch number from the signed callback's `message.sender_id`. If that field is absent or empty, set `SINCH_SMS_SENDER` to your Sinch number in the deployment environment. SMS replies fail before sending if neither value is available. This allows replies without a default originator configured in Sinch. Non-SMS replies omit this property. See [Sinch SMS channel properties](https://developers.sinch.com/docs/conversation/channel-support/sms/properties).
+
 ## Checks and production
 
 ```sh
